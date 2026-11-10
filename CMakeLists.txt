@@ -13,6 +13,8 @@ juce_add_gui_app(Syntaziser
 
 target_sources(Syntaziser PRIVATE
     src/Main.cpp
+    src/dsp/Oscillator.cpp
+    src/dsp/Oscillator.h
 )
 
 target_compile_definitions(Syntaziser PRIVATE
