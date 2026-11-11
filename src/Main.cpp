@@ -9,7 +9,7 @@ public:
     SynthComponent()
     {
         setSize(400, 200);
-
+        //play / stop btn 
         addAndMakeVisible(playButton);
         playButton.setButtonText("Play");
 
@@ -23,6 +23,25 @@ public:
             );
         };
 
+        //frequency knob 
+        addAndMakeVisible(frequencySlider);
+
+        frequencySlider.setTextBoxStyle(
+            juce::Slider::TextBoxBelow,
+            false,
+            100,
+            25
+        );
+
+        frequencySlider.setRange(50.0, 2000.0, 1.0);
+        frequencySlider.setValue(440.0);
+        frequencySlider.setTextValueSuffix(" Hz");
+
+        frequencySlider.onValueChange = [this]()
+        {
+            targetFrequency.store(frequencySlider.getValue());
+        };
+        //initialize audio 
         setAudioChannels(0, 2);
     }
 
@@ -34,32 +53,55 @@ public:
     void prepareToPlay(int, double newSampleRate) override
     {
         oscillator.prepare(newSampleRate);
+        currentFrequency = targetFrequency.load();
+        oscillator.setFrequency(currentFrequency);
     }
 
-    void getNextAudioBlock(
-        const juce::AudioSourceChannelInfo& bufferToFill) override
+
+
+void getNextAudioBlock(
+    const juce::AudioSourceChannelInfo& bufferToFill) override
+{
+    // Access the audio buffer
+    auto* buffer = bufferToFill.buffer;
+
+    // Frequency smoothing
+    const double smoothing = 0.001;
+
+    // Generate audio sample by sample
+    for (int sample = 0; sample < bufferToFill.numSamples; ++sample)
     {
-        auto* buffer = bufferToFill.buffer;
+        // Read the frequency selected by the knob
+        const double target = targetFrequency.load();
 
-        for (int sample = 0; sample < bufferToFill.numSamples; ++sample)
+        // Smoothly move toward the target frequency
+        currentFrequency += smoothing * (target - currentFrequency);
+
+        // Update our oscillator's frequency
+        oscillator.setFrequency(currentFrequency);
+
+        // Start with silence
+        float value = 0.0f;
+
+        // Generate sound only when Play is active
+        if (isPlaying.load())
         {
-            float value = 0.0f;
+            value = 0.15f * oscillator.getNextSample();
+        }
 
-            if (isPlaying.load())
-            {
-                value = 0.15f * oscillator.getNextSample();
-            }
-
-            for (int channel = 0; channel < buffer->getNumChannels(); ++channel)
-            {
-                buffer->setSample(
-                    channel,
-                    bufferToFill.startSample + sample,
-                    value
-                );
-            }
+        // Send the same sound to left and right channels
+        for (int channel = 0; channel < buffer->getNumChannels(); ++channel)
+        {
+            buffer->setSample(
+                channel,
+                bufferToFill.startSample + sample,
+                value
+            );
         }
     }
+}
+
+
 
     void releaseResources() override {}
 
@@ -80,13 +122,22 @@ public:
 
     void resized() override
     {
-        playButton.setBounds(150, 120, 100, 40);
+        frequencySlider.setBounds(135, 65, 130, 100);
+        playButton.setBounds(150, 165, 100, 30);
     }
 
 private:
     Oscillator oscillator;
-    juce::TextButton playButton;
-    std::atomic<bool> isPlaying { false };
+    
+    juce::TextButton playButton; // user interface 
+    juce::Slider frequencySlider; // user interface
+    juce::Label frequencyLabel; // user interface
+
+    std::atomic<bool> isPlaying { false }; //audio playback state
+
+    //frequency controls
+    std::atomic<double> targetFrequency { 440.0 };
+    double currentFrequency = 440.0;
 };
 
 class SyntaziserApplication : public juce::JUCEApplication
