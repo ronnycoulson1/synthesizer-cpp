@@ -1,21 +1,34 @@
 
 #include <atomic>
+#include <memory>
 #include <juce_audio_utils/juce_audio_utils.h>
+
 #include "dsp/Oscillator.h"
+#include "dsp/Filter.h"
+
+// ============================================
+// SYNTHESIZER COMPONENT
+// ============================================
 
 class SynthComponent : public juce::AudioAppComponent
 {
 public:
     SynthComponent()
     {
-        setSize(400, 200);
-        //play / stop btn 
+        // Window dimensions
+        setSize(500, 300);
+
+        // ====================================
+        // PLAY / STOP BUTTON
+        // ====================================
+
         addAndMakeVisible(playButton);
         playButton.setButtonText("Play");
 
         playButton.onClick = [this]()
         {
             bool shouldPlay = !isPlaying.load();
+
             isPlaying.store(shouldPlay);
 
             playButton.setButtonText(
@@ -23,8 +36,15 @@ public:
             );
         };
 
-        //frequency knob 
+        // ====================================
+        // FREQUENCY KNOB
+        // ====================================
+
         addAndMakeVisible(frequencySlider);
+
+        frequencySlider.setSliderStyle(
+            juce::Slider::RotaryHorizontalVerticalDrag
+        );
 
         frequencySlider.setTextBoxStyle(
             juce::Slider::TextBoxBelow,
@@ -39,71 +59,203 @@ public:
 
         frequencySlider.onValueChange = [this]()
         {
-            targetFrequency.store(frequencySlider.getValue());
+            targetFrequency.store(
+                frequencySlider.getValue()
+            );
         };
-        //initialize audio 
+
+        // ====================================
+        // WAVEFORM SELECTOR
+        // ====================================
+
+        addAndMakeVisible(waveformSelector);
+
+        waveformSelector.addItem("Sine", 1);
+        waveformSelector.addItem("Square", 2);
+        waveformSelector.addItem("Sawtooth", 3);
+
+        waveformSelector.setSelectedId(1);
+
+        waveformSelector.onChange = [this]()
+        {
+            selectedWaveform.store(
+                waveformSelector.getSelectedId() - 1
+            );
+        };
+
+        // ====================================
+        // FILTER CUTOFF KNOB
+        // ====================================
+
+        addAndMakeVisible(cutoffSlider);
+
+        cutoffSlider.setSliderStyle(
+            juce::Slider::RotaryHorizontalVerticalDrag
+        );
+
+        cutoffSlider.setTextBoxStyle(
+            juce::Slider::TextBoxBelow,
+            false,
+            100,
+            25
+        );
+
+        cutoffSlider.setRange(100.0, 10000.0, 1.0);
+
+        cutoffSlider.setSkewFactorFromMidPoint(
+            1000.0
+        );
+
+        cutoffSlider.setValue(1000.0);
+        cutoffSlider.setTextValueSuffix(" Hz");
+
+        cutoffSlider.onValueChange = [this]()
+        {
+            targetCutoff.store(
+                cutoffSlider.getValue()
+            );
+        };
+
+        // Initialize stereo audio output
         setAudioChannels(0, 2);
     }
+
+    // ========================================
+    // DESTRUCTOR
+    // ========================================
 
     ~SynthComponent() override
     {
         shutdownAudio();
     }
 
-    void prepareToPlay(int, double newSampleRate) override
+    // ========================================
+    // PREPARE AUDIO
+    // ========================================
+
+    void prepareToPlay(
+        int,
+        double newSampleRate
+    ) override
     {
         oscillator.prepare(newSampleRate);
+
         currentFrequency = targetFrequency.load();
+
         oscillator.setFrequency(currentFrequency);
+
+        lowPassFilter.prepare(newSampleRate);
+
+        lowPassFilter.setCutoff(
+            targetCutoff.load()
+        );
     }
 
+    // ========================================
+    // AUDIO PROCESSING
+    // ========================================
 
-
-void getNextAudioBlock(
-    const juce::AudioSourceChannelInfo& bufferToFill) override
-{
-    // Access the audio buffer
-    auto* buffer = bufferToFill.buffer;
-
-    // Frequency smoothing
-    const double smoothing = 0.001;
-
-    // Generate audio sample by sample
-    for (int sample = 0; sample < bufferToFill.numSamples; ++sample)
+    void getNextAudioBlock(
+        const juce::AudioSourceChannelInfo& bufferToFill
+    ) override
     {
-        // Read the frequency selected by the knob
-        const double target = targetFrequency.load();
+        auto* buffer = bufferToFill.buffer;
 
-        // Smoothly move toward the target frequency
-        currentFrequency += smoothing * (target - currentFrequency);
+        // Update filter cutoff
+        lowPassFilter.setCutoff(
+            targetCutoff.load()
+        );
 
-        // Update our oscillator's frequency
-        oscillator.setFrequency(currentFrequency);
+        // Read selected waveform
+        const int waveformIndex =
+            selectedWaveform.load();
 
-        // Start with silence
-        float value = 0.0f;
-
-        // Generate sound only when Play is active
-        if (isPlaying.load())
+        switch (waveformIndex)
         {
-            value = 0.15f * oscillator.getNextSample();
+            case 0:
+                oscillator.setWaveform(
+                    Oscillator::Waveform::Sine
+                );
+                break;
+
+            case 1:
+                oscillator.setWaveform(
+                    Oscillator::Waveform::Square
+                );
+                break;
+
+            case 2:
+                oscillator.setWaveform(
+                    Oscillator::Waveform::Saw
+                );
+                break;
+
+            default:
+                oscillator.setWaveform(
+                    Oscillator::Waveform::Sine
+                );
+                break;
         }
 
-        // Send the same sound to left and right channels
-        for (int channel = 0; channel < buffer->getNumChannels(); ++channel)
+        // Frequency smoothing coefficient
+        const double smoothing = 0.001;
+
+        // Generate audio
+        for (
+            int sample = 0;
+            sample < bufferToFill.numSamples;
+            ++sample
+        )
         {
-            buffer->setSample(
-                channel,
-                bufferToFill.startSample + sample,
-                value
+            const double target =
+                targetFrequency.load();
+
+            currentFrequency += smoothing *
+                (target - currentFrequency);
+
+            oscillator.setFrequency(
+                currentFrequency
             );
+
+            float value = 0.0f;
+
+            if (isPlaying.load())
+            {
+                // Generate waveform
+                float rawSample =
+                    oscillator.getNextSample();
+
+                // Apply low-pass filter
+                float filteredSample =
+                    lowPassFilter.processSample(rawSample);
+
+                // Control output amplitude
+                value = 0.15f * filteredSample;
+            }
+
+            // Write to left and right channels
+            for (
+                int channel = 0;
+                channel < buffer->getNumChannels();
+                ++channel
+            )
+            {
+                buffer->setSample(
+                    channel,
+                    bufferToFill.startSample + sample,
+                    value
+                );
+            }
         }
     }
-}
 
+    void releaseResources() override
+    {
+    }
 
-
-    void releaseResources() override {}
+    // ========================================
+    // USER INTERFACE
+    // ========================================
 
     void paint(juce::Graphics& g) override
     {
@@ -113,8 +265,11 @@ void getNextAudioBlock(
         g.setFont(24.0f);
 
         g.drawFittedText(
-            "Syntaziser - 440 Hz",
-            0, 30, getWidth(), 50,
+            "Syntaziser",
+            0,
+            25,
+            getWidth(),
+            50,
             juce::Justification::centred,
             1
         );
@@ -122,23 +277,51 @@ void getNextAudioBlock(
 
     void resized() override
     {
-        frequencySlider.setBounds(135, 65, 130, 100);
-        playButton.setBounds(150, 165, 100, 30);
+        frequencySlider.setBounds(
+            70, 85, 140, 115
+        );
+
+        cutoffSlider.setBounds(
+            290, 85, 140, 115
+        );
+
+        waveformSelector.setBounds(
+            180, 205, 140, 25
+        );
+
+        playButton.setBounds(
+            200, 250, 100, 35
+        );
     }
 
 private:
+    // DSP components
     Oscillator oscillator;
-    
-    juce::TextButton playButton; // user interface 
-    juce::Slider frequencySlider; // user interface
-    juce::Label frequencyLabel; // user interface
+    Filter lowPassFilter;
 
-    std::atomic<bool> isPlaying { false }; //audio playback state
+    // Interface controls
+    juce::TextButton playButton;
+    juce::Slider frequencySlider;
+    juce::Slider cutoffSlider;
+    juce::ComboBox waveformSelector;
 
-    //frequency controls
+    // Thread-safe playback state
+    std::atomic<bool> isPlaying { false };
+
+    // Frequency controls
     std::atomic<double> targetFrequency { 440.0 };
     double currentFrequency = 440.0;
+
+    // Waveform selection
+    std::atomic<int> selectedWaveform { 0 };
+
+    // Filter cutoff control
+    std::atomic<double> targetCutoff { 1000.0 };
 };
+
+// ============================================
+// APPLICATION
+// ============================================
 
 class SyntaziserApplication : public juce::JUCEApplication
 {
@@ -150,12 +333,14 @@ public:
 
     const juce::String getApplicationVersion() override
     {
-        return "0.2.0";
+        return "0.4.0";
     }
 
     void initialise(const juce::String&) override
     {
-        mainWindow.reset(new MainWindow(getApplicationName()));
+        mainWindow.reset(
+            new MainWindow(getApplicationName())
+        );
     }
 
     void shutdown() override
@@ -171,7 +356,8 @@ private:
             : DocumentWindow(
                 name,
                 juce::Colours::black,
-                allButtons)
+                allButtons
+            )
         {
             setUsingNativeTitleBar(true);
 
@@ -180,7 +366,11 @@ private:
                 true
             );
 
-            centreWithSize(getWidth(), getHeight());
+            centreWithSize(
+                getWidth(),
+                getHeight()
+            );
+
             setVisible(true);
         }
 

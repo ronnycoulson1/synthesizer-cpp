@@ -15,8 +15,9 @@ target_sources(Syntaziser PRIVATE
     src/Main.cpp
     src/dsp/Oscillator.cpp
     src/dsp/Oscillator.h
+    src/dsp/Filter.cpp
+    src/dsp/Filter.h
 )
-
 target_compile_definitions(Syntaziser PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0

@@ -4,8 +4,17 @@
 class Oscillator
 {
 public:
+    enum class Waveform
+    {
+        Sine,
+        Square,
+        Saw
+    };
+
     void prepare(double sampleRate);
     void setFrequency(double newFrequency);
+    void setWaveform(Waveform newWaveform);
+
     float getNextSample();
 
 private:
@@ -13,6 +22,8 @@ private:
     double phase = 0.0;
     double phaseIncrement = 0.0;
     double currentSampleRate = 44100.0;
+
+    Waveform waveform = Waveform::Sine;
 
     void updatePhaseIncrement();
 };
