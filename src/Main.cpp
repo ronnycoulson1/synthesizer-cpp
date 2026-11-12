@@ -5,6 +5,7 @@
 
 #include "dsp/Oscillator.h"
 #include "dsp/Filter.h"
+#include "dsp/Envelope.h"
 
 // ============================================
 // SYNTHESIZER COMPONENT
@@ -138,17 +139,22 @@ public:
         double newSampleRate
     ) override
     {
+        //initialize oscillator 
         oscillator.prepare(newSampleRate);
 
         currentFrequency = targetFrequency.load();
-
         oscillator.setFrequency(currentFrequency);
 
+        // initialize low-pass filter
         lowPassFilter.prepare(newSampleRate);
+        lowPassFilter.setCutoff(targetCutoff.load());
 
-        lowPassFilter.setCutoff(
-            targetCutoff.load()
-        );
+            amplitudeEnvelope.setAttack(0.05);
+            amplitudeEnvelope.setDecay(0.2);
+            amplitudeEnvelope.setSustain(0.5);
+            amplitudeEnvelope.setRelease(0.3);
+
+            envelopeGateOpen = false;
     }
 
     // ========================================
@@ -199,6 +205,20 @@ public:
 
         // Frequency smoothing coefficient
         const double smoothing = 0.001;
+        const bool requestedPlaying = isPlaying.load();
+
+        if (requestedPlaying != envelopeGateOpen)
+        {
+            if (requestedPlaying)
+                amplitudeEnvelope.noteOn();
+            else
+                amplitudeEnvelope.noteOff();
+
+            envelopeGateOpen = requestedPlaying;
+        }   
+
+
+
 
         // Generate audio
         for (
@@ -217,21 +237,22 @@ public:
                 currentFrequency
             );
 
-            float value = 0.0f;
+            // Generate oscillator sample
+            float rawSample = oscillator.getNextSample();
 
-            if (isPlaying.load())
-            {
-                // Generate waveform
-                float rawSample =
-                    oscillator.getNextSample();
+            // Apply low-pass filter
+            float filteredSample =
+                lowPassFilter.processSample(rawSample);
 
-                // Apply low-pass filter
-                float filteredSample =
-                    lowPassFilter.processSample(rawSample);
+            // Get the current ADSR amplitude
+            float envelopeLevel =
+                amplitudeEnvelope.getNextSample();
 
-                // Control output amplitude
-                value = 0.15f * filteredSample;
-            }
+            // Apply envelope to the filtered waveform
+            float value =
+                0.15f * filteredSample * envelopeLevel;
+
+
 
             // Write to left and right channels
             for (
@@ -298,6 +319,10 @@ private:
     // DSP components
     Oscillator oscillator;
     Filter lowPassFilter;
+    Envelope amplitudeEnvelope;
+    bool envelopeGateOpen = false;
+
+
 
     // Interface controls
     juce::TextButton playButton;

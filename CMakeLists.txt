@@ -11,13 +11,20 @@ juce_add_gui_app(Syntaziser
     PRODUCT_NAME "Syntaziser"
 )
 
+
 target_sources(Syntaziser PRIVATE
     src/Main.cpp
+
     src/dsp/Oscillator.cpp
     src/dsp/Oscillator.h
+
     src/dsp/Filter.cpp
     src/dsp/Filter.h
+
+    src/dsp/Envelope.cpp
+    src/dsp/Envelope.h
 )
+
 target_compile_definitions(Syntaziser PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
