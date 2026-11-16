@@ -17,7 +17,7 @@ public:
     SynthComponent()
     {
         // Window dimensions
-        setSize(500, 300);
+        setSize(660, 430);
 
         // ====================================
         // PLAY / STOP BUTTON
@@ -117,6 +117,69 @@ public:
             );
         };
 
+        // ADSR slider 
+        juce::Slider* adsrSliders[] = {
+            &attackSlider,
+            &decaySlider,
+            &sustainSlider,
+            &releaseSlider
+        }; 
+
+        for (auto* slider : adsrSliders){
+            addAndMakeVisible(*slider);
+
+            slider->setSliderStyle(
+                juce::Slider::RotaryHorizontalVerticalDrag
+            );
+            slider->setTextBoxStyle(
+                juce::Slider::TextBoxBelow,
+                false,
+                75,
+                22
+            );
+        }
+
+        //atack: 1 ms to 2s
+        attackSlider.setRange(0.001, 2.0, 0.001);
+        attackSlider.setValue(0.05);
+        attackSlider.setTextValueSuffix(" s");
+
+        // Decay: 1 ms to 2 seconds
+        decaySlider.setRange(0.001, 2.0, 0.001);
+        decaySlider.setValue(0.20);
+        decaySlider.setTextValueSuffix(" s");
+
+        // Sustain: 0% to 100%
+        sustainSlider.setRange(0.0, 1.0, 0.01);
+        sustainSlider.setValue(0.50);
+
+        // Release: 1 ms to 3 seconds
+        releaseSlider.setRange(0.001, 3.0, 0.001);
+        releaseSlider.setValue(0.30);
+        releaseSlider.setTextValueSuffix(" s");
+
+        //send knob changes to audio thread 
+
+        attackSlider.onValueChange = [this](){
+            targetAttack.store(attackSlider.getValue());
+        };
+
+        decaySlider.onValueChange = [this] () {
+            targetDecay.store(decaySlider.getValue());
+        };
+
+        sustainSlider.onValueChange = [this] (){
+            targetSustain.store(sustainSlider.getValue());
+        };
+
+        releaseSlider.onValueChange = [this]()
+        {
+            targetRelease.store(releaseSlider.getValue());
+        };
+
+
+
+
         // Initialize stereo audio output
         setAudioChannels(0, 2);
     }
@@ -134,28 +197,32 @@ public:
     // PREPARE AUDIO
     // ========================================
 
-    void prepareToPlay(
-        int,
-        double newSampleRate
-    ) override
-    {
-        //initialize oscillator 
-        oscillator.prepare(newSampleRate);
 
-        currentFrequency = targetFrequency.load();
-        oscillator.setFrequency(currentFrequency);
+void prepareToPlay(int, double newSampleRate) override
+{
+    // Initialize oscillator
+    oscillator.prepare(newSampleRate);
 
-        // initialize low-pass filter
-        lowPassFilter.prepare(newSampleRate);
-        lowPassFilter.setCutoff(targetCutoff.load());
+    currentFrequency = targetFrequency.load();
+    oscillator.setFrequency(currentFrequency);
 
-            amplitudeEnvelope.setAttack(0.05);
-            amplitudeEnvelope.setDecay(0.2);
-            amplitudeEnvelope.setSustain(0.5);
-            amplitudeEnvelope.setRelease(0.3);
+    // Initialize low-pass filter
+    lowPassFilter.prepare(newSampleRate);
+    lowPassFilter.setCutoff(targetCutoff.load());
 
-            envelopeGateOpen = false;
-    }
+    // Initialize ADSR envelope
+    amplitudeEnvelope.prepare(newSampleRate);
+
+    // Read values from the ADSR knobs
+    amplitudeEnvelope.setAttack(targetAttack.load());
+    amplitudeEnvelope.setDecay(targetDecay.load());
+    amplitudeEnvelope.setSustain(
+    static_cast<float>(targetSustain.load()));
+    amplitudeEnvelope.setRelease(targetRelease.load());
+
+    envelopeGateOpen = false;
+}
+
 
     // ========================================
     // AUDIO PROCESSING
@@ -171,6 +238,14 @@ public:
         lowPassFilter.setCutoff(
             targetCutoff.load()
         );
+
+        //updated adsr params from the gui knob
+        amplitudeEnvelope.setAttack(targetAttack.load());
+        amplitudeEnvelope.setDecay(targetDecay.load());
+       amplitudeEnvelope.setSustain(static_cast<float>(targetSustain.load()));
+        amplitudeEnvelope.setRelease(targetRelease.load());
+
+
 
         // Read selected waveform
         const int waveformIndex =
@@ -296,24 +371,24 @@ public:
         );
     }
 
+
     void resized() override
     {
-        frequencySlider.setBounds(
-            70, 85, 140, 115
-        );
+        // Oscillator and filter controls
+        frequencySlider.setBounds(125, 80, 150, 115);
+        cutoffSlider.setBounds(375, 80, 150, 115);
 
-        cutoffSlider.setBounds(
-            290, 85, 140, 115
-        );
+        // ADSR controls
+        attackSlider.setBounds(35, 230, 130, 110);
+        decaySlider.setBounds(185, 230, 130, 110);
+        sustainSlider.setBounds(335, 230, 130, 110);
+        releaseSlider.setBounds(485, 230, 130, 110);
 
-        waveformSelector.setBounds(
-            180, 205, 140, 25
-        );
-
-        playButton.setBounds(
-            200, 250, 100, 35
-        );
+        // Waveform selector and Play button
+        waveformSelector.setBounds(255, 190, 140, 25);
+        playButton.setBounds(275, 365, 100, 38);
     }
+
 
 private:
     // DSP components
@@ -329,6 +404,20 @@ private:
     juce::Slider frequencySlider;
     juce::Slider cutoffSlider;
     juce::ComboBox waveformSelector;
+
+
+    // ADSR envelope knobs
+    juce::Slider attackSlider;
+    juce::Slider decaySlider;
+    juce::Slider sustainSlider;
+    juce::Slider releaseSlider;
+
+
+    //values shared between GUI and audio 
+    std::atomic<double> targetAttack {0.05};
+    std::atomic<double> targetDecay {0.20};
+    std::atomic<double> targetSustain {0.50};
+    std::atomic<double> targetRelease {0.30};
 
     // Thread-safe playback state
     std::atomic<bool> isPlaying { false };
