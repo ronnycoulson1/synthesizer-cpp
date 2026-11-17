@@ -299,25 +299,41 @@ void prepareToPlay(int, double newSampleRate) override
         // Frequency smoothing coefficient
         const double smoothing = 0.001;
         
-        const bool requestedPlaying = isPlaying.load() || midiGate.load();
+       
+        const bool requestedPlaying =
+            isPlaying.load() || midiGate.load();
 
-        if (midiGate.load()) {
-            const int note = midiNote.load();
-            if (note >= 0) {
-                const double frequency = juce::MidiMessage::getMidiNoteInHertz(note);
+        // Check whether a new MIDI key was pressed
+        const unsigned int currentTriggerCount =
+            midiTriggerCount.load();
 
-                oscillator.setFrequency(frequency);
+        const bool newMidiNote =
+            currentTriggerCount != lastMidiTriggerCount;
 
-            }
+        // Remember the latest trigger
+        lastMidiTriggerCount = currentTriggerCount;
+
+        // Start a new Attack for each MIDI key press
+        if (newMidiNote && midiGate.load())
+        {
+            amplitudeEnvelope.noteOn();
+            envelopeGateOpen = true;
         }
-
-        if(requestedPlaying != envelopeGateOpen) {
-            if(requestedPlaying)
+        // Otherwise, handle normal Play/Stop transitions
+        else if (requestedPlaying != envelopeGateOpen)
+        {
+            if (requestedPlaying)
+            {
                 amplitudeEnvelope.noteOn();
+            }
             else
+            {
                 amplitudeEnvelope.noteOff();
+            }
+
             envelopeGateOpen = requestedPlaying;
         }
+
 
 
 
@@ -489,16 +505,27 @@ private:
 
     std::atomic<int> midiNote {-1};
     std::atomic<bool> midiGate {false};
+    std::atomic<unsigned int> midiTriggerCount {0};
+    unsigned int lastMidiTriggerCount = 0;
 
+
+    
     void handleNoteOn(
         juce::MidiKeyboardState*,
         int,
         int midiNoteNumber,
         float
-    ) override {
+    ) override{
+        // Store the note being played
         midiNote.store(midiNoteNumber);
+
+        // Open the MIDI gate
         midiGate.store(true);
+
+        // Signal a new note press
+        midiTriggerCount.fetch_add(1);
     }
+
 
     void handleNoteOff(
         juce::MidiKeyboardState*,
