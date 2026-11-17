@@ -11,13 +11,30 @@
 // SYNTHESIZER COMPONENT
 // ============================================
 
-class SynthComponent : public juce::AudioAppComponent
+class SynthComponent : public juce::AudioAppComponent,
+                        private juce::MidiKeyboardStateListener
 {
 public:
     SynthComponent()
     {
+        //display virtual midi keyboard 
+        addAndMakeVisible(midiKeyboard);
+
+        //start at middle c (midii note 60)
+
+    // Display virtual MIDI keyboard
+    addAndMakeVisible(midiKeyboard);
+
+    // Set keyboard note range
+    midiKeyboard.setAvailableRange(48, 84);
+    midiKeyboard.setLowestVisibleKey(48);
+
+    // Connect MIDI keyboard to our synthesizer
+    midiKeyboardState.addListener(this);
+
+
         // Window dimensions
-        setSize(660, 430);
+        setSize(660, 550);
 
         // ====================================
         // PLAY / STOP BUTTON
@@ -190,6 +207,7 @@ public:
 
     ~SynthComponent() override
     {
+        midiKeyboardState.removeListener(this);
         shutdownAudio();
     }
 
@@ -280,17 +298,26 @@ void prepareToPlay(int, double newSampleRate) override
 
         // Frequency smoothing coefficient
         const double smoothing = 0.001;
-        const bool requestedPlaying = isPlaying.load();
+        
+        const bool requestedPlaying = isPlaying.load() || midiGate.load();
 
-        if (requestedPlaying != envelopeGateOpen)
-        {
-            if (requestedPlaying)
+        if (midiGate.load()) {
+            const int note = midiNote.load();
+            if (note >= 0) {
+                const double frequency = juce::MidiMessage::getMidiNoteInHertz(note);
+
+                oscillator.setFrequency(frequency);
+
+            }
+        }
+
+        if(requestedPlaying != envelopeGateOpen) {
+            if(requestedPlaying)
                 amplitudeEnvelope.noteOn();
             else
                 amplitudeEnvelope.noteOff();
-
             envelopeGateOpen = requestedPlaying;
-        }   
+        }
 
 
 
@@ -302,15 +329,27 @@ void prepareToPlay(int, double newSampleRate) override
             ++sample
         )
         {
-            const double target =
-                targetFrequency.load();
 
-            currentFrequency += smoothing *
-                (target - currentFrequency);
 
-            oscillator.setFrequency(
-                currentFrequency
-            );
+            const int note = midiNote.load();
+            const bool keyHeld = midiGate.load();
+
+            if (keyHeld && note >= 0)
+            {
+                // Play the MIDI note at its exact frequency
+                currentFrequency =
+                    juce::MidiMessage::getMidiNoteInHertz(note);
+            }
+            else if (isPlaying.load())
+            {
+                // Use the frequency knob for manual playback
+                currentFrequency = targetFrequency.load();
+            }
+
+            // Set the oscillator frequency
+            oscillator.setFrequency(currentFrequency);
+
+
 
             // Generate oscillator sample
             float rawSample = oscillator.getNextSample();
@@ -387,6 +426,9 @@ void prepareToPlay(int, double newSampleRate) override
         // Waveform selector and Play button
         waveformSelector.setBounds(255, 190, 140, 25);
         playButton.setBounds(275, 365, 100, 38);
+
+        //virtual piano 
+        midiKeyboard.setBounds(30,430,590, 90);
     }
 
 
@@ -431,6 +473,48 @@ private:
 
     // Filter cutoff control
     std::atomic<double> targetCutoff { 1000.0 };
+
+
+
+    
+
+    // MIDI KEYBOARD 
+    juce::MidiKeyboardState midiKeyboardState;
+
+    juce::MidiKeyboardComponent midiKeyboard {
+        midiKeyboardState,
+        juce::MidiKeyboardComponent::horizontalKeyboard
+    };
+
+
+    std::atomic<int> midiNote {-1};
+    std::atomic<bool> midiGate {false};
+
+    void handleNoteOn(
+        juce::MidiKeyboardState*,
+        int,
+        int midiNoteNumber,
+        float
+    ) override {
+        midiNote.store(midiNoteNumber);
+        midiGate.store(true);
+    }
+
+    void handleNoteOff(
+        juce::MidiKeyboardState*,
+        int,
+        int midiNoteNumber,
+        float
+    ) override {
+        if (midiNote.load() == midiNoteNumber){
+            midiGate.store(false);
+        }
+    }
+
+
+
+
+
 };
 
 // ============================================
